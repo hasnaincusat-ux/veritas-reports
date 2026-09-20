@@ -1,0 +1,229 @@
+// Switch to Postgres: set provider = "postgresql" and point DATABASE_URL at it.
+// Schema deliberately avoids enums/Json so it is portable across both engines.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         String   @default("USER") // USER | ADMIN
+  credits      Int      @default(0)
+  status       String   @default("ACTIVE") // ACTIVE | SUSPENDED
+  resetToken       String?  @unique
+  resetTokenExpiry DateTime?
+
+  // Per-customer features, switched on by an admin. Off for everyone by default.
+  featureShareLinks Boolean @default(false)
+  featureApi        Boolean @default(false)
+  // Name shown to people who open this customer's share links.
+  partnerName       String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  submissions  Submission[]
+  transactions CreditTransaction[]
+  reviews      Review[]
+  auditLogs    AuditLog[]          @relation("ActorLogs")
+  shareLinks   ShareLink[]
+  apiKeys      ApiKey[]
+
+  @@index([role])
+  @@index([createdAt])
+}
+
+model Submission {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  reference String @unique // human-facing e.g. VR-8F2K4Q
+  title     String
+  fileName  String
+  fileSize  Int
+  mimeType  String
+  storagePath String
+  // QUEUED | PROCESSING | COMPLETED | FAILED | CANCELLED
+  status         String @default("QUEUED")
+  creditsCharged Int    @default(1)
+
+  // Fulfilment routing — lets LtiProvider drop in beside ManualProvider.
+  provider    String  @default("manual")
+  providerRef String?
+
+  // Where the upload came from: DASHBOARD | SHARE_LINK | API
+  origin      String  @default("DASHBOARD")
+  shareLinkId String?
+  shareLink   ShareLink? @relation(fields: [shareLinkId], references: [id], onDelete: SetNull)
+  apiKeyId    String?
+  apiKey      ApiKey?    @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  // Secret that lets a share-link recipient (who has no account) see this one result.
+  accessToken String?    @unique
+  guestName   String?
+
+  // Exclusions chosen at upload; the operator applies these in Turnitin and
+  // they are restated on the report so the numbers can be interpreted.
+  excludeBibliography Boolean @default(true)
+  excludeQuotes       Boolean @default(true)
+  smallMatchMode      String  @default("OFF") // OFF | WORDS | PERCENT
+  smallMatchValue     Int?
+
+  similarityScore Float?
+  aiScore         Float?
+  wordCount       Int?
+  pageCount       Int?
+
+  similarityReportPath String?
+  aiReportPath         String?
+
+  adminNote     String?
+  failureReason String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+  purgeAfter  DateTime? // 7-day auto-delete of the source file
+
+  events      SubmissionEvent[]
+  transactions CreditTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([shareLinkId])
+  @@index([apiKeyId])
+}
+
+// Drives the live progress timeline the user watches.
+model SubmissionEvent {
+  id           String     @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  status       String
+  message      String
+  createdAt    DateTime   @default(now())
+
+  @@index([submissionId, createdAt])
+}
+
+model CreditTransaction {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  delta        Int
+  balanceAfter Int
+  // SIGNUP_BONUS | ADMIN_GRANT | ADMIN_REVOKE | SUBMISSION_CHARGE | REFUND
+  reason  String
+  note    String?
+  actorId String?
+
+  submissionId String?
+  submission   Submission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model Review {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  name   String
+  rating Int
+  body   String
+  status String @default("PENDING") // PENDING | APPROVED | REJECTED
+
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+}
+
+model ContactMessage {
+  id      String @id @default(cuid())
+  name    String
+  email   String
+  subject String
+  message String
+  status  String @default("NEW") // NEW | READ | ARCHIVED
+
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+}
+
+model AuditLog {
+  id      String  @id @default(cuid())
+  actorId String?
+  actor   User?   @relation("ActorLogs", fields: [actorId], references: [id], onDelete: SetNull)
+
+  action     String
+  targetType String?
+  targetId   String?
+  meta       String? // JSON-encoded string, kept portable
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// A prepaid bundle of checks a partner hands to someone else. Credits are
+// moved out of the owner's balance when the link is created and the unused
+// remainder returns when it is cancelled.
+model ShareLink {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  code      String @unique // opaque, appears in the URL
+  label     String
+  allocated Int
+  used      Int    @default(0)
+  status    String @default("ACTIVE") // ACTIVE | EXHAUSTED | CANCELLED
+
+  createdAt   DateTime  @default(now())
+  cancelledAt DateTime?
+
+  submissions Submission[]
+
+  @@index([ownerId, createdAt])
+}
+
+model ApiKey {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  label  String
+  prefix String // the visible head of the key, e.g. vr_live_3f9a
+  hash   String @unique // sha256 of the full key; the plaintext is never stored
+  status String @default("ACTIVE") // ACTIVE | REVOKED
+
+  webhookUrl String?
+  usageCount Int       @default(0)
+  lastUsedAt DateTime?
+
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  submissions Submission[]
+
+  @@index([ownerId, createdAt])
+}

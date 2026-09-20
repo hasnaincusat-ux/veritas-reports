@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-cream text-ink;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight;
+  }
+
+  ::selection {
+    @apply bg-brand-100 text-brand-800;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-600 ring-offset-2;
+    --tw-ring-offset-color: theme(colors.cream.DEFAULT);
+  }
+}
+
+@layer components {
+  .shell {
+    @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
+  }
+
+  /* Instrument label: a reading taken off a machine, not a sentence. */
+  .micro-label {
+    @apply font-mono text-[10px] font-medium uppercase tracking-academic text-ink-faint;
+  }
+
+  .eyebrow {
+    @apply font-mono text-[10px] font-semibold uppercase tracking-academic text-brand-600;
+  }
+
+  /* Emphasis phrase in a display heading. */
+  .gradient-text {
+    @apply bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-transparent;
+  }
+
+  /* White panel on the near-white ground, separated by a hairline. */
+  .card {
+    @apply rounded-xl3 border border-ink/10 bg-surface shadow-soft;
+  }
+
+  .card-warm {
+    @apply rounded-xl3 border border-brand-200 bg-brand-50;
+  }
+
+  /* Highlighted panel — indigo keyline rather than a neon gradient. */
+  .card-gradient {
+    @apply rounded-xl3 border border-brand-200 bg-surface shadow-soft;
+  }
+
+  /* Nav pill: ghost by default, pale indigo when active (template pattern). */
+  .pill-tab {
+    @apply inline-flex items-center gap-1.5 rounded-xl2 px-3.5 py-1.5 text-sm font-medium
+           text-ink-soft transition-colors hover:bg-cream-deep hover:text-ink;
+  }
+  .pill-tab-active {
+    @apply bg-brand-50 text-brand-600 hover:bg-brand-50 hover:text-brand-600;
+  }
+
+  .marker {
+    @apply gradient-text;
+  }
+
+  /* Pale wash behind hero sections. */
+  .vignette {
+    background: linear-gradient(
+      to bottom,
+      rgba(63, 91, 217, 0.07),
+      rgba(248, 250, 252, 0) 70%
+    );
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded bg-cream-deep;
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/70 to-transparent;
+    animation: shimmer 1.6s infinite;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
