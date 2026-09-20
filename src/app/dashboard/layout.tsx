@@ -5,6 +5,10 @@ import { logoutAction } from "@/actions/auth";
 import { getCurrentUser } from "@/lib/auth";
 import { ROLE } from "@/lib/types";
 
+// Reads the database per request. Without this Next tries to prerender at
+// build time, when no database exists yet, and the build fails.
+export const dynamic = "force-dynamic";
+
 function tabsFor(user: { featureShareLinks: boolean; featureApi: boolean }): Tab[] {
   return [
     { href: "/dashboard", label: "Check", exact: true },

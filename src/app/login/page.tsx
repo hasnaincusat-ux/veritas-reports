@@ -6,6 +6,10 @@ import { LoginForm } from "@/components/site/AuthForms";
 import { getCurrentUser } from "@/lib/auth";
 import { ROLE } from "@/lib/types";
 
+// Reads the database per request. Without this Next tries to prerender at
+// build time, when no database exists yet, and the build fails.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = { title: "Sign in" };
 
 export default async function LoginPage() {

@@ -5,6 +5,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ROLE } from "@/lib/types";
 
+// Reads the database per request. Without this Next tries to prerender at
+// build time, when no database exists yet, and the build fails.
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");

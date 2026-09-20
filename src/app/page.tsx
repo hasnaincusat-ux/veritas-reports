@@ -17,6 +17,10 @@ import { Header } from "@/components/site/Header";
 import { HeroDemo } from "@/components/site/HeroDemo";
 import { db } from "@/lib/db";
 
+// Reads the database per request. Without this Next tries to prerender at
+// build time, when no database exists yet, and the build fails.
+export const dynamic = "force-dynamic";
+
 const SITE = process.env.NEXT_PUBLIC_SITE_NAME || "Veritas Reports";
 
 const STEPS = [
