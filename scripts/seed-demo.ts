@@ -3,6 +3,7 @@
  * and admin queue can be reviewed with realistic content.
  *   npx tsx --conditions=react-server scripts/seed-demo.ts
  */
+import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { db } from "../src/lib/db";
 import { saveFile } from "../src/lib/storage";
@@ -43,8 +44,11 @@ function tinyPdf(title: string, lines: string[]) {
 }
 
 async function main() {
-  const email = "demo@example.com";
-  const password = "demo-account-2026";
+  // Not hardcoded: this repo is public, and a known password in source is an
+  // invitation to try it against a real deployment. Override via env, or take
+  // the random one printed at the end.
+  const email = process.env.DEMO_EMAIL || "demo@example.com";
+  const password = process.env.DEMO_PASSWORD || randomBytes(9).toString("base64url");
 
   let user = await db.user.findUnique({ where: { email } });
   if (!user) {
