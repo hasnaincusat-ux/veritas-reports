@@ -1,11 +1,12 @@
-// Switch to Postgres: set provider = "postgresql" and point DATABASE_URL at it.
-// Schema deliberately avoids enums/Json so it is portable across both engines.
+// Postgres in every environment — local and production — so there is no
+// dialect drift between what you test and what you ship.
+// The schema avoids enums/Json, so it also runs on SQLite if you ever need it.
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
