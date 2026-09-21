@@ -10,18 +10,14 @@ credit, and get back two PDF reports. Operators work a queue in an admin panel.
 
 Next.js 16 (App Router, server actions) · TypeScript · Tailwind · Prisma.
 
-The database is **SQLite in development** and the schema is written to be
-Postgres-portable — no enums, no `Json` columns. To move to Postgres, change one
-line in `prisma/schema.prisma`:
+The database is **Postgres everywhere** — development included — so local and
+production behave identically. The schema deliberately avoids enums and `Json`
+columns, which is what made the move off SQLite a one-line change.
 
-```prisma
-datasource db {
-  provider = "postgresql"   // was "sqlite"
-  url      = env("DATABASE_URL")
-}
-```
-
-…point `DATABASE_URL` at your instance and run `npx prisma db push`.
+Point `DATABASE_URL` at any Postgres instance (Supabase and Neon both have a
+free tier) and run `npx prisma db push`. On a serverless host, use the
+provider's **pooled** connection string — each invocation opens its own
+connection and the direct one runs out under real traffic.
 
 ## Running it
 
@@ -47,14 +43,17 @@ covering every status, plus contact messages and a pending review.
 
 ### Environment
 
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | SQLite file path, or a Postgres connection string |
-| `AUTH_SECRET` | Session signing key — **must** be 32+ chars. Generate a fresh one for production |
-| `STORAGE_DIR` | Where uploads and report PDFs are written |
-| `NEXT_PUBLIC_SITE_NAME` | Brand name shown in the logo, titles and footer |
-| `SUBMISSION_PROVIDER` | `manual` (default) or `lti` |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Read by the seed script only |
+| Variable                                    | Purpose                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| `DATABASE_URL`                              | Postgres connection string — pooled, on a serverless host                        |
+| `AUTH_SECRET`                               | Session signing key — **must** be 32+ chars. Generate a fresh one for production |
+| `S3_BUCKET`                                 | Set it to store files in object storage instead of on disk                       |
+| `S3_ENDPOINT` / `S3_REGION`                 | Omit the endpoint only for real AWS S3                                           |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Object storage credentials                                                       |
+| `STORAGE_DIR`                               | Disk backend only — ignored when `S3_BUCKET` is set                              |
+| `NEXT_PUBLIC_SITE_NAME`                     | Brand name shown in the logo, titles and footer                                  |
+| `SUBMISSION_PROVIDER`                       | `manual` (default) or `lti`                                                      |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD`            | Read by the seed script only                                                     |
 
 ## Design system
 
@@ -64,7 +63,7 @@ primary `#3F5BD9` with a pale indigo accent for icon tiles and active nav.
 **DM Sans** body, **Plus Jakarta Sans** headings, JetBrains Mono for readings.
 8–12px radii, soft shadows.
 
-Only the template's *design* was taken. Its codebase (Vite SPA + Supabase +
+Only the template's _design_ was taken. Its codebase (Vite SPA + Supabase +
 shadcn) was deliberately not adopted — porting the credit ledger, share links,
 API keys and admin panel onto Supabase RLS would have cost far more than the UI
 kit is worth.
@@ -77,7 +76,7 @@ component at once. Two things to know:
   a dark-theme phase and are now back to their literal meaning, so
   `border-ink/10` is a grey hairline again.
 - Scores carry **two independent signals**: `METRICS` colours the ring and label
-  to say *which* reading it is (similarity = indigo, AI = violet), while
+  to say _which_ reading it is (similarity = indigo, AI = violet), while
   `scoreBand` colours the figure to say how serious it is (green → amber → red).
   Keep those ramps disjoint or the two signals start lying to each other.
 
@@ -118,10 +117,10 @@ Content lives in `MATCH_GROUPS`, `TOP_SOURCES`, `SUBMISSION_ID` and the two
 Every upload carries the Turnitin-style exclusions that decide what counts
 toward the similarity score:
 
-| Filter | Default |
-| --- | --- |
-| Exclude bibliography | on |
-| Exclude quoted text | on |
+| Filter                | Default                                  |
+| --------------------- | ---------------------------------------- |
+| Exclude bibliography  | on                                       |
+| Exclude quoted text   | on                                       |
 | Exclude small matches | off — or under N words / under N percent |
 
 They are chosen on the Check tab, on a share link's public page, and via the
@@ -134,6 +133,32 @@ The choices are **restated wherever a score appears** — the customer's report,
 the recipient's result page, the API response, and most importantly the admin
 workbench, where the operator must set the same exclusions in Turnitin before
 generating the report. A similarity figure is not interpretable without them.
+
+## Where files live
+
+`src/lib/storage.ts` has **two backends behind one interface**, picked at
+startup by whether `S3_BUCKET` is set:
+
+- **Object storage** (S3 / Supabase Storage / R2 / B2) — production. Required
+  on serverless hosts, where the filesystem is recreated per request and wiped
+  on redeploy, so a report written to disk is gone before it can be downloaded.
+- **Local disk** — development and the test suites, so neither needs a cloud
+  account or credentials.
+
+Only `saveFile`, `readStoredFile` and `deleteStoredFile` are exported, and
+nothing outside that file knows which backend is in use.
+
+**The bucket must be private.** Files are never served from it directly; every
+download goes through an ownership check in
+`/api/submissions/[id]/download/[kind]`. A public bucket bypasses that check
+for anyone who guesses a key.
+
+Keys are generated here and never taken from user input, and `isSafeKey`
+rejects traversal, absolute paths, backslashes and drive letters — so a
+tampered database value still cannot reach another customer's file. The check
+is string-based rather than path-based on purpose: the same key has to be
+refused identically on both backends, and an S3 key has no filesystem to
+resolve against.
 
 ## How a check flows
 
@@ -210,6 +235,20 @@ npx tsx --conditions=react-server scripts/selftest-features.ts
 accounting, the one-check race, guest token access, key hashing, tenant
 isolation, revocation, feature-flag enforcement over HTTP, and exclusion
 parsing/clamping/persistence.
+
+Neither of those needs a cloud account, because they run against the local-disk
+storage backend. The storage layer itself has its own suite, which runs the same
+assertions against **both** backends so they are proven to behave identically:
+
+```bash
+npm run test:storage                      # local disk      — 20 checks
+STORAGE_TEST_S3=1 npm run test:storage    # object storage  — 22 checks
+```
+
+The object-storage run stands up a throwaway in-process server that speaks
+enough of the protocol to exercise the real AWS SDK, real request signing and
+real HTTP, so it catches wiring mistakes that a mock of our own code would not.
+It needs no credentials and touches no network beyond localhost.
 
 > After any `prisma/schema.prisma` change, restart `npm run dev`. The dev
 > server keeps the old generated client in memory and every DB call will 500

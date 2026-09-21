@@ -5,3 +5,9 @@ node_modules
 *.db-journal
 storage/*
 !storage/.gitkeep
+
+# Scratch directory created by scripts/selftest-storage.ts
+storage-test/
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo

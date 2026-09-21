@@ -10,9 +10,12 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "setup:admin": "tsx prisma/seed.ts"
+    "setup:admin": "tsx prisma/seed.ts",
+    "test:storage": "tsx --conditions=react-server scripts/selftest-storage.ts",
+    "purge": "tsx --conditions=react-server scripts/purge-expired.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1136.0",
     "@prisma/client": "^6.2.1",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",

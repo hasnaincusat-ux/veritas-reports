@@ -3,14 +3,13 @@
  * customer's original document is purged, which is what the 7-day promise on
  * the marketing page refers to.
  *
- * Run on a schedule, e.g. daily:  npx tsx scripts/purge-expired.ts
+ * Run on a schedule, e.g. daily:
+ *   npx tsx --conditions=react-server scripts/purge-expired.ts
  */
 import { PrismaClient } from "@prisma/client";
-import { unlink } from "node:fs/promises";
-import path from "node:path";
+import { deleteStoredFile, isSafeKey, usingObjectStorage } from "../src/lib/storage";
 
 const db = new PrismaClient();
-const ROOT = path.resolve(process.env.STORAGE_DIR || "./storage");
 
 async function main() {
   const due = await db.submission.findMany({
@@ -28,19 +27,15 @@ async function main() {
 
   let removed = 0;
   for (const s of due) {
-    const full = path.resolve(ROOT, s.storagePath);
-    // Same guard as the storage helper: never unlink outside the storage root.
-    if (full !== ROOT && !full.startsWith(ROOT + path.sep)) {
-      console.warn(`Skipping ${s.reference}: path escapes the storage root.`);
+    // The storage helper ignores an unsafe key silently; say so here, because a
+    // key that fails this check means the row has been tampered with.
+    if (!isSafeKey(s.storagePath)) {
+      console.warn(`Skipping ${s.reference}: key escapes the storage root.`);
       continue;
     }
 
-    try {
-      await unlink(full);
-      removed++;
-    } catch {
-      /* already gone */
-    }
+    await deleteStoredFile(s.storagePath);
+    removed++;
 
     // Blank the pointer so the record stays but the file is known to be gone.
     await db.submission.update({
@@ -49,7 +44,10 @@ async function main() {
     });
   }
 
-  console.log(`Purged ${removed} source file(s) across ${due.length} submission(s).`);
+  console.log(
+    `Purged ${removed} source file(s) across ${due.length} submission(s) ` +
+      `from ${usingObjectStorage ? "object storage" : "local disk"}.`,
+  );
 }
 
 main()

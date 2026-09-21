@@ -1,121 +1,115 @@
 # Deploying
 
-## Read this first: why not Vercel
+**If you just want the site live, follow [STEPS.md](STEPS.md)** — it is the
+same thing written for someone who has not deployed before. This file is the
+reference: what the pieces are and why.
 
-`src/lib/storage.ts` writes uploaded documents and report PDFs to a **directory
-on disk**. Vercel's filesystem is ephemeral — anything written during a request
-is gone on the next one, and everything is wiped on redeploy. Deployed there,
-this app would accept uploads and then serve `410 Gone` for every download.
+## Storage: read this first
 
-So you need **either**:
+`src/lib/storage.ts` has **two backends behind one interface**, chosen at
+startup by a single environment variable:
 
-- a host with a **persistent volume** — Railway, Render, Fly, or any VPS. Works
-  with zero code changes. This is the fast path, and what this guide covers.
-- **or** object storage (S3 / Cloudflare R2 / Supabase Storage) wired into
-  `src/lib/storage.ts` first — after which Vercel is fine. That is a contained
-  change: `saveFile`, `readStoredFile` and `deleteStoredFile` are the only three
-  functions that touch the disk.
+| `S3_BUCKET` | Backend                      | Use                             |
+| ----------- | ---------------------------- | ------------------------------- |
+| set         | S3-compatible object storage | production, any host            |
+| empty       | local disk (`STORAGE_DIR`)   | development and the test suites |
 
-Everything below uses **Railway**, because it gives you the app, Postgres and a
-volume in one project. Render and Fly are near-identical in shape.
+Nothing outside that file knows which is in use.
 
----
+This is what makes serverless hosting possible. On Vercel, Netlify or Lambda
+the filesystem is recreated per request and wiped on redeploy, so a report
+written to disk is already gone by the time the customer clicks download. With
+`S3_BUCKET` set, nothing touches the disk.
+
+Any S3-compatible service works — Supabase Storage, Cloudflare R2, Backblaze
+B2, AWS S3, MinIO. **Supabase Storage is the recommended default**: it is free,
+needs no payment method, and it is the same account as the database.
+
+> **Cloudflare R2** is also excellent and has a generous free tier, but it
+> requires a payment method on file before it can be enabled.
+
+Verify a backend before trusting it:
+
+```bash
+npm run test:storage                      # local disk
+STORAGE_TEST_S3=1 npm run test:storage    # object storage
+```
+
+The S3 run stands up a throwaway in-process server that speaks enough of the
+protocol to exercise the real AWS SDK, real request signing and real HTTP —
+so it catches wiring mistakes that a mock of our own code would not.
 
 ## 1. Database
 
-The schema is now `postgresql` for **every** environment, so local and
-production behave identically.
+The schema is `postgresql` for **every** environment, so local and production
+behave identically. Supabase and Neon both have a free tier.
 
-Create a free Postgres at [neon.tech](https://neon.tech) (or use Railway's).
-Take two connection strings:
-
-| Use | Where |
-| --- | --- |
-| a **development** branch | your local `.env` |
-| the **main** branch | Railway's `DATABASE_URL` |
-
-Point your local `.env` at the dev branch and run:
+On a serverless host you **must** use a pooled connection string — Supabase's
+**Transaction pooler** (port 6543, with `?pgbouncer=true`) or Neon's pooled
+endpoint. Each serverless invocation opens its own connection; the direct
+string exhausts the connection limit under real traffic.
 
 ```bash
-npx prisma db push
-npx tsx prisma/seed.ts
+DATABASE_URL="<pooled url>" npx prisma db push
 ```
 
-> Your existing `prisma/dev.db` is SQLite and is **not** migrated. The seed
-> recreates the admin; `scripts/seed-demo.ts` recreates the sample customer.
+> A pre-existing `prisma/dev.db` is SQLite and is **not** migrated.
+> `prisma/seed.ts` recreates the admin; `scripts/seed-demo.ts` recreates the
+> sample customer. Never run the latter against production.
 
-## 2. Push to GitHub
+## 2. Environment variables
 
-The repo is already initialised and committed, with `.env` and `*.db` ignored.
+| Variable                                    | Notes                                                       |
+| ------------------------------------------- | ----------------------------------------------------------- |
+| `DATABASE_URL`                              | pooled Postgres URL                                         |
+| `AUTH_SECRET`                               | a **fresh** 32+ char secret — `openssl rand -base64 48`     |
+| `NEXT_PUBLIC_SITE_URL`                      | `https://your-domain.com`, no trailing slash                |
+| `S3_BUCKET`                                 | set this to use object storage                              |
+| `S3_ENDPOINT`                               | omit only for real AWS S3, which derives it from the region |
+| `S3_REGION`                                 | `auto` for R2; the project's region for Supabase            |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` |                                                             |
+| `STORAGE_DIR`                               | disk backend only; ignored when `S3_BUCKET` is set          |
+| `NEXT_PUBLIC_SITE_NAME`                     | brand name                                                  |
+| `SUBMISSION_PROVIDER`                       | `manual`                                                    |
+
+The repo is **public**. Secrets go in the host's environment settings and
+nowhere else. Never reuse a development `AUTH_SECRET` — changing it signs
+everyone out, which is the correct behaviour if it is ever exposed.
+
+## 3. Hosting
+
+**Vercel** is the default target: import the GitHub repo, set the variables
+above, deploy. Build is `npm run build`, which runs `prisma generate` first.
+
+A host with a persistent volume (Railway, Render, Fly, a VPS) also works and
+can skip the `S3_*` variables entirely by mounting a disk and setting
+`STORAGE_DIR`. That is no longer the recommended path — it costs money and
+buys nothing the object-storage backend does not already give you.
+
+## 4. The bucket must be private
+
+Files are **never** served from the bucket directly. Every download goes
+through `/api/submissions/[id]/download/[kind]`, which checks ownership first.
+A public bucket would make every customer's document reachable by anyone who
+guessed a key, bypassing that check entirely.
+
+## 5. Retention sweep
+
+The 7-day purge does not run itself. Schedule it daily — a Vercel Cron, a
+GitHub Action, or any scheduler that can run:
 
 ```bash
-git remote add origin https://github.com/<you>/<repo>.git
-git branch -M main
-git push -u origin main
+npm run purge
 ```
 
-## 3. Create the Railway project
+It deletes **source documents only**; generated reports are kept. Until this
+runs on a schedule, the "deleted after 7 days" promise on the marketing page
+is not being kept.
 
-1. **New Project → Deploy from GitHub repo** → pick the repo.
-2. Railway detects Next.js. Confirm the commands are:
-   - Build: `npm run build`  (this already runs `prisma generate`)
-   - Start: `npm start`
-3. **+ New → Database → Postgres** if you are not using Neon.
+## 6. Domain
 
-## 4. Add the persistent volume — do not skip this
-
-In the service: **Settings → Volumes → New Volume**, mount path `/data`.
-
-Then set `STORAGE_DIR=/data/storage`. Without a volume, every redeploy destroys
-customers' reports.
-
-## 5. Environment variables
-
-Service → **Variables**:
-
-| Variable | Value |
-| --- | --- |
-| `DATABASE_URL` | your Postgres URL (use Railway's `${{Postgres.DATABASE_URL}}` if hosted there) |
-| `AUTH_SECRET` | a **fresh** 32+ char secret — `openssl rand -base64 48` |
-| `NEXT_PUBLIC_SITE_URL` | `https://your-domain.com`, no trailing slash |
-| `STORAGE_DIR` | `/data/storage` |
-| `NEXT_PUBLIC_SITE_NAME` | your brand name |
-| `SUBMISSION_PROVIDER` | `manual` |
-
-Never reuse the development `AUTH_SECRET`. Changing it later signs everyone out,
-which is the correct behaviour if it is ever exposed.
-
-## 6. First deploy, then initialise
-
-Deploy. Once it is up, run once against the **production** database — either
-from Railway's shell or locally with `DATABASE_URL` pointed at production:
-
-```bash
-npx prisma db push          # create the tables
-ADMIN_EMAIL=you@your-domain.com ADMIN_PASSWORD='<a strong password>' \
-  npx tsx prisma/seed.ts    # create the admin
-```
-
-Do **not** run `scripts/seed-demo.ts` against production — it creates a fake
-customer with sample submissions.
-
-## 7. Domain
-
-Service → **Settings → Networking → Custom Domain**. Add the CNAME Railway
-gives you at your registrar. Then set `NEXT_PUBLIC_SITE_URL` to the real origin
-and redeploy, so share links resolve correctly.
-
-## 8. Schedule the retention sweep
-
-The 7-day purge does not run itself. Add a Railway **Cron** service on the same
-repo and volume, daily:
-
-```bash
-npx tsx --conditions=react-server scripts/purge-expired.ts
-```
-
-Until this runs on a schedule, the "deleted after 7 days" promise on the
-marketing page is not actually being kept.
+Add the custom domain in the host's dashboard, then set `NEXT_PUBLIC_SITE_URL`
+to the real origin and redeploy, so share links resolve correctly.
 
 ---
 
@@ -123,15 +117,14 @@ marketing page is not actually being kept.
 
 Ranked by how much they would hurt.
 
-1. **No payments.** Credits are granted by hand in the admin panel. Until a
-   gateway is wired in, every sale is manual.
+1. **No payments.** Credits are granted by hand in the admin panel.
 2. **No transactional email.** Nobody is told their report is ready, and
    password reset has schema fields but no flow — a locked-out customer needs
    you to fix it by hand.
 3. **No API rate limiting.** Keys are authenticated and tenant-isolated, but a
    leaked key can be hammered.
-4. **Backups.** Neon and Railway Postgres both snapshot, but the **volume** may
-   not be. Reports live there.
+4. **Backups.** Check what your database provider retains on the free tier, and
+   whether the bucket is versioned. Reports live in the bucket.
 5. **Uptime and errors.** No monitoring. A 500 loop would be invisible to you.
 
 ## Health check after each deploy
@@ -142,6 +135,6 @@ curl -s -o /dev/null -w "login %{http_code}\n" https://your-domain.com/login
 curl -s -o /dev/null -w "api %{http_code}\n"   https://your-domain.com/api/v1/checks
 ```
 
-Expect `200`, `200`, `401`. Then sign in as admin and upload one real document
-end to end — the storage volume is the part most likely to be misconfigured,
-and only a real upload proves it.
+Expect `200`, `200`, `401`. Then sign in as admin and **upload one real
+document and download it again** — storage is the part most likely to be
+misconfigured, and only a real round trip proves it.
