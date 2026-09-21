@@ -15,15 +15,45 @@ about 30 minutes of clicking. **No credit card, nothing expires.**
 
 ---
 
+## Step 0 — Set up a separate identity first ⚠️ DO THIS FIRST
+
+This is a **client site**, so none of it should live in your personal
+accounts. Mixing them causes three specific problems later:
+
+- You cannot hand the site over without handing over your personal login
+- The client's database sits next to your own projects, one misclick apart
+- If you ever stop working with them, untangling it is painful
+
+So before anything else, **make one new email address just for this client**
+— a free Gmail is fine, e.g. `yourbrand.veritas@gmail.com`.
+
+Every account below gets created with **that** email, using email-and-password
+sign-up. Do **not** click "Continue with GitHub" anywhere in this guide — that
+is what would tie it all back to your personal account.
+
+> **Who should own these?** If the client is paying and this is their
+> business, these accounts are ultimately theirs. Creating them on a dedicated
+> address now means you can hand over the password later and be done. Putting
+> them on your personal email means you are their hosting provider forever.
+
+---
+
 ## Step 1 — Make the database (Supabase)
 
-1. Go to **https://supabase.com** → **Start your project** → sign in with GitHub
-2. Click **New project**
-3. Name it anything, e.g. `veritas`
-4. **Write down the database password it asks you to set** — you cannot see it
+1. Go to **https://supabase.com** → **Start your project**
+2. Choose **Sign up** and register with the **client email from step 0** and a
+   new password — not GitHub
+3. When it asks for an **organization**, create a new one named after the
+   client. Do not reuse an existing one.
+4. Click **New project**
+5. Name it anything, e.g. `veritas`
+6. **Write down the database password it asks you to set** — you cannot see it
    again later
-5. Pick the region closest to your customers
-6. Click **Create new project** and wait ~2 minutes
+7. Pick the region closest to your customers
+8. Click **Create new project** and wait ~2 minutes
+
+> If Supabase drops you into an organization you already had, stop and switch
+> — the project must be created inside the new one.
 
 ---
 
@@ -86,10 +116,18 @@ It should print `Your database is now in sync with your Prisma schema.`
 
 ## Step 5 — Put the site online (Vercel)
 
-1. Go to **https://vercel.com** → **Sign up** → **Continue with GitHub**
-2. Click **Add New** → **Project**
-3. Find **veritas-reports** in the list and click **Import**
-4. **Do not click Deploy yet.** Open **Environment Variables** first.
+1. Go to **https://vercel.com** → **Sign up**
+2. Register with the **client email from step 0**, not GitHub
+3. Vercel still needs to read the code, so when it asks, connect the GitHub
+   account that holds the repo and **grant it access to `veritas-reports`
+   only** — not to all your repositories
+4. Click **Add New** → **Project**
+5. Find **veritas-reports** in the list and click **Import**
+6. **Do not click Deploy yet.** Open **Environment Variables** first.
+
+> This is the one place the client's setup still touches your GitHub, because
+> that is where the code lives. Scoping the permission to this single repo
+> keeps it narrow. See "Handing it over" at the end for how to cut even that.
 
 Add these one at a time. Name on the left, value on the right:
 
@@ -172,6 +210,21 @@ git push
 ```
 
 Vercel sees the push and redeploys automatically. That's it.
+
+---
+
+## Handing it over later
+
+Because everything is on one dedicated email, handover is: give the client
+that email's password, and the Supabase and Vercel accounts go with it.
+
+The **code** is the one loose end — the repo is under your GitHub account. When
+the time comes, GitHub's **Settings → Transfer ownership** moves it to theirs,
+and Vercel keeps deploying once they re-point it. Until then, nothing in the
+running site depends on your personal account staying available.
+
+> Worth deciding early whether the code is theirs or licensed to them. It is
+> much easier to agree now than the day they ask for it.
 
 ---
 
